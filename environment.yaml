@@ -1,0 +1,27 @@
+name: lpips-timm
+channels:
+  - pytorch
+  - nvidia
+  - anaconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch=2.4.0
+  - torchvision=0.19.0
+  - torchaudio=2.4.0
+  - pytorch-cuda=12.4
+  - pip:
+      - einops
+      - matplotlib
+      - opencv-python
+      - pudb
+      - pytorch-lightning==2.5.0
+      - tensorboard=2.19.0
+      - protobuf==4.25
+      - omegaconf
+      - configargparse
+      - timm
+      - numpy
+      - tqdm
+      - scikit-image
