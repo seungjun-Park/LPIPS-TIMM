@@ -25,14 +25,16 @@ PRETRAINED_WEIGHT = {
     'vgg': 'vgg16',
     'vit': 'vit_base_patch16_224',
     'swin_v2': 'swin_base_patch4_window7_224',
-    'convnext_v2' : 'convnext_base_384_in22k'
+    'convnext_v2' : 'convnextv2_base.fcmae_ft_in22k_in1k_384'
 }
 
 # Learned perceptual metric
 class LPIPS(pl.LightningModule):
     def __init__(self, 
                  net_type='vgg',   
-                 lr: float = 1e-3
+                 lr: float = 1e-4,
+                 decay_start_epoch: int = 5,
+                 decay_epochs: int = 5
             ):
         super(LPIPS, self).__init__()
 
@@ -55,6 +57,8 @@ class LPIPS(pl.LightningModule):
             self.lins.append(NetLinLayer(feature_channels[i], use_dropout=True))
 
         self.rankLoss = BCERankingLoss()
+
+        self.save_hyperparameters()
 
     def compute_accuracy(self, d0, d1, judge):
         ''' d0, d1 are Variables, judge is a Tensor '''
@@ -82,7 +86,7 @@ class LPIPS(pl.LightningModule):
         res = []
         val = 0
         for lin, out0, out1 in zip(self.lins, outs0, outs1):
-            re = spatial_average(lin(normalize_tensor(out0) - normalize_tensor(out1)**2), keepdim=True)
+            re = spatial_average(lin((normalize_tensor(out0) - normalize_tensor(out1))**2), keepdim=True)
             res.append(re)
             val += re
         
@@ -120,13 +124,29 @@ class LPIPS(pl.LightningModule):
         self.step(batch)
 
     def configure_optimizers(self):
-        params = list(self.lins.parameters()) + list(self.rankLoss.parameters())
+        params = list(self.lins.parameters()) + list(self.rankLoss.net.parameters())
         opt_net = torch.optim.AdamW(params,
                                     lr=self.lr,
                                     betas=(0.5, 0.9),
                                     )
 
-        return opt_net
+        def lr_lambda(epoch):
+            if epoch < self.hparams.decay_start_epoch:
+                return 1.0
+            else:
+                past_decay_epochs = epoch - self.hparams.decay_start_epoch
+                
+                decay = 1.0 - (past_decay_epochs / float(self.hparams.decay_epochs + 1))
+                
+                return max(0.0, decay)
+
+        # 스케줄러 생성
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            opt_net, 
+            lr_lambda=lr_lambda
+        )
+
+        return [opt_net], [scheduler]
 
 
 class ScalingLayer(nn.Module):
@@ -180,43 +200,6 @@ class BCERankingLoss(nn.Module):
         self.logit = self.net.forward(d0,d1)
         return self.loss(self.logit, per)
 
-# L2, DSSIM metrics
-class FakeNet(nn.Module):
-    def __init__(self, use_gpu=True, colorspace='Lab'):
-        super(FakeNet, self).__init__()
-        self.use_gpu = use_gpu
-        self.colorspace = colorspace
-
-class L2(FakeNet):
-    def forward(self, in0, in1, retPerLayer=None):
-        assert(in0.size()[0]==1) # currently only supports batchSize 1
-
-        if(self.colorspace=='RGB'):
-            (N,C,X,Y) = in0.size()
-            value = torch.mean(torch.mean(torch.mean((in0-in1)**2,dim=1).view(N,1,X,Y),dim=2).view(N,1,1,Y),dim=3).view(N)
-            return value
-        elif(self.colorspace=='Lab'):
-            value = lpips.l2(lpips.tensor2np(lpips.tensor2tensorlab(in0.data,to_norm=False)), 
-                lpips.tensor2np(lpips.tensor2tensorlab(in1.data,to_norm=False)), range=100.).astype('float')
-            ret_var = Variable( torch.Tensor((value,) ) )
-            if(self.use_gpu):
-                ret_var = ret_var.cuda()
-            return ret_var
-
-class DSSIM(FakeNet):
-
-    def forward(self, in0, in1, retPerLayer=None):
-        assert(in0.size()[0]==1) # currently only supports batchSize 1
-
-        if(self.colorspace=='RGB'):
-            value = lpips.dssim(1.*lpips.tensor2im(in0.data), 1.*lpips.tensor2im(in1.data), range=255.).astype('float')
-        elif(self.colorspace=='Lab'):
-            value = lpips.dssim(lpips.tensor2np(lpips.tensor2tensorlab(in0.data,to_norm=False)), 
-                lpips.tensor2np(lpips.tensor2tensorlab(in1.data,to_norm=False)), range=100.).astype('float')
-        ret_var = Variable( torch.Tensor((value,) ) )
-        if(self.use_gpu):
-            ret_var = ret_var.cuda()
-        return ret_var
 
 def score_2afc_dataset(data_loader, func, name=''):
     ''' Function computes Two Alternative Forced Choice (2AFC) score using
