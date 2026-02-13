@@ -25,7 +25,7 @@ PRETRAINED_WEIGHT = {
     'vgg': 'vgg16',
     'vit': 'vit_base_patch16_224',
     'swin_v2': 'swin_base_patch4_window7_224',
-    'convnext_v2' : 'convnextv2_base.fcmae_ft_in22k_in1k_384'
+    'convnext_v2' : 'convnextv2_base.fcmae_ft_in22k_in1k'
 }
 
 # Learned perceptual metric
